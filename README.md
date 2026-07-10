@@ -13,6 +13,8 @@ Difficulté : Très facile (~5 minutes)
 **Faites un Fork de ce projet**. Si besion, voici une vidéo d'accompagnement pour vous aider dans les "Forks" : [Forker ce projet](https://youtu.be/p33-7XQ29zQ) 
   
 Ensuite depuis l'onglet [CODE] de votre nouveau Repository, **ouvrez un Codespace Github**.
+
+DONE 
   
 ---------------------------------------------------
 Séquence 2 : Création du cluster Kubernetes K3d
