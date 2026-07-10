@@ -65,8 +65,7 @@ Votre mission (si vous l'acceptez) : Créez une **image applicative customisée 
 ![Screenshot Actions](Architecture_cible.png)   
   
 ---------------------------------------------------  
-## Processus de travail (résumé)
-
+## Processus de travail
 1. Installation du cluster Kubernetes K3d (Séquence 1)
 2. Installation de Packer et Ansible
 3. Build de l'image customisée (Nginx + index.html)
@@ -91,4 +90,133 @@ Cet atelier, **noté sur 20 points**, est évalué sur la base du barème suivan
 - Qualité du Readme (lisibilité, erreur, ...) (4 points)
 - Processus travail (quantité de commits, cohérence globale, interventions externes, ...) (4 points) 
 
+-------------------------------------------------------------------------------------------------------------------------------
+# Atelier From Image to Cluster
 
+## Objectif
+
+Industrialiser le cycle de vie d'une application Nginx :
+
+1. **Packer** construit une image Docker Nginx personnalisée qui embarque le `index.html` du repository.
+2. **K3d** fournit un cluster Kubernetes local léger (1 master + 2 workers).
+3. **Ansible** importe l'image dans le cluster et déploie automatiquement le `Deployment` + `Service` Kubernetes correspondants.
+4. L'ensemble tourne dans **GitHub Codespaces**, sans dépendance externe.
+
+```
+index.html ──(Packer)──▶ image Docker nginx-custom ──(k3d image import)──▶ cluster K3d
+                                                              │
+                                                     (Ansible) ▼
+                                              Deployment + Service Kubernetes
+```
+
+## Structure du projet
+
+```
+.
+├── index.html                     # Page servie par Nginx (à personnaliser)
+├── packer/
+│   └── docker-nginx.pkr.hcl       # Build de l'image Nginx customisée
+├── ansible/
+│   ├── ansible.cfg
+│   ├── inventory/hosts.ini        # Inventaire (exécution en local)
+│   └── deploy.yml                 # Import image + déploiement K8s
+├── Makefile                       # Orchestration de bout en bout
+└── README.md
+```
+
+## Prérequis
+
+- Un Codespace GitHub ouvert sur ce repository (voir Séquence 1).
+- Rien d'autre à installer manuellement : `make` s'occupe d'installer `k3d`, `packer` et `ansible` s'ils sont absents.
+
+## 🚀 Utilisation rapide (tout automatique)
+
+```bash
+make all
+```
+
+Cette commande enchaîne, dans l'ordre :
+
+| Étape | Cible Makefile | Ce qu'elle fait |
+|---|---|---|
+| 1 | `cluster` | Installe k3d si besoin, crée le cluster `lab` (1 master + 2 workers) |
+| 2 | `packer-build` | Construit l'image `nginx-custom:latest` avec Packer (Nginx + `index.html`) |
+| 3 | `deploy` | Lance le playbook Ansible : importe l'image dans K3d, applique le Deployment et le Service Kubernetes |
+| 4 | `port-forward` | Expose l'application sur `localhost:8081` |
+
+## Étapes détaillées (si vous préférez piloter à la main)
+
+### 1. Créer le cluster K3d
+```bash
+make cluster
+kubectl get nodes
+```
+Vous devez voir 1 nœud `server` et 2 nœuds `agent`, tous à l'état `Ready`.
+
+### 2. Construire l'image customisée avec Packer
+```bash
+make packer-build
+```
+Packer part de l'image officielle `nginx:stable-alpine`, y copie le `index.html` présent à la racine du repository dans `/usr/share/nginx/html/`, puis tague le résultat `nginx-custom:latest` dans le registre Docker local du Codespace.
+
+Vérification :
+```bash
+docker images | grep nginx-custom
+```
+
+### 3. Déployer sur K3d avec Ansible
+```bash
+make deploy
+```
+Le playbook `ansible/deploy.yml` :
+- vérifie que l'image `nginx-custom:latest` existe bien en local (sinon il échoue avec un message explicite invitant à lancer `make packer-build`) ;
+- vérifie que le cluster `lab` existe (sinon il échoue en invitant à lancer `make cluster`) ;
+- importe l'image dans le cluster K3d via `k3d image import` (indispensable : K3d ne voit pas le registre Docker de l'hôte par défaut) ;
+- génère et applique un `Deployment` (2 réplicas) et un `Service` de type `NodePort` pour l'application ;
+- attend que le rollout soit terminé (`kubectl rollout status`).
+
+### 4. Exposer et tester l'application
+```bash
+make port-forward
+```
+Puis, dans l'onglet **PORTS** du Codespace :
+1. Repérez le port `8081`.
+2. Passez sa visibilité en **Public**.
+3. Ouvrez l'URL générée : vous devez voir votre page `index.html`, servie depuis le cluster Kubernetes.
+
+### 5. Vérifier l'état du déploiement
+```bash
+make status
+```
+Affiche les pods, le deployment et le service associés au label `app=nginx-custom`.
+
+## Nettoyage
+
+```bash
+make clean
+```
+Supprime le Deployment, le Service, et détruit le cluster K3d `lab`.
+
+## Personnalisation
+
+- **Changer la page servie** : modifiez `index.html` à la racine du repo, puis relancez `make packer-build && make deploy`.
+- **Changer le nombre de réplicas / le port** : variables `replicas`, `node_port`, `container_port` en tête de `ansible/deploy.yml`.
+- **Nom du cluster** : variable `CLUSTER_NAME` dans le `Makefile` (et `cluster_name` dans `deploy.yml` — gardez les deux synchronisées).
+
+## Points d'attention techniques
+
+- **Pourquoi `k3d image import` ?** K3d fait tourner les nœuds dans des conteneurs Docker isolés ; une image buildée localement avec Packer/Docker n'est pas automatiquement visible par le containerd interne de K3d. L'import copie l'image dans chaque nœud du cluster.
+- **`imagePullPolicy: IfNotPresent`** : essentiel pour que Kubernetes utilise l'image importée localement plutôt que de tenter de la télécharger depuis Docker Hub (où `nginx-custom` n'existe pas).
+- **Idempotence** : `make cluster` ne recrée pas le cluster s'il existe déjà ; le playbook Ansible peut être rejoué sans casser l'existant (`kubectl apply` est idempotent).
+
+## Résumé des commandes essentielles
+
+```bash
+make all            # tout en une commande
+make cluster        # étape 1 : cluster K3d
+make packer-build   # étape 2 : build image Packer
+make deploy          # étape 3 : import + déploiement Ansible
+make port-forward    # étape 4 : exposition locale
+make status          # vérification
+make clean            # nettoyage complet
+```
