@@ -203,12 +203,6 @@ Supprime le Deployment, le Service, et détruit le cluster K3d `lab`.
 - **Changer le nombre de réplicas / le port** : variables `replicas`, `node_port`, `container_port` en tête de `ansible/deploy.yml`.
 - **Nom du cluster** : variable `CLUSTER_NAME` dans le `Makefile` (et `cluster_name` dans `deploy.yml` — gardez les deux synchronisées).
 
-## Points d'attention techniques
-
-- **Pourquoi `k3d image import` ?** K3d fait tourner les nœuds dans des conteneurs Docker isolés ; une image buildée localement avec Packer/Docker n'est pas automatiquement visible par le containerd interne de K3d. L'import copie l'image dans chaque nœud du cluster.
-- **`imagePullPolicy: IfNotPresent`** : essentiel pour que Kubernetes utilise l'image importée localement plutôt que de tenter de la télécharger depuis Docker Hub (où `nginx-custom` n'existe pas).
-- **Idempotence** : `make cluster` ne recrée pas le cluster s'il existe déjà ; le playbook Ansible peut être rejoué sans casser l'existant (`kubectl apply` est idempotent).
-
 ## Résumé des commandes essentielles
 
 ```bash
