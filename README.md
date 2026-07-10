@@ -129,7 +129,7 @@ index.html ──(Packer)──▶ image Docker nginx-custom ──(k3d image im
 - Un Codespace GitHub ouvert sur ce repository (voir Séquence 1).
 - Rien d'autre à installer manuellement : `make` s'occupe d'installer `k3d`, `packer` et `ansible` s'ils sont absents.
 
-## 🚀 Utilisation rapide (tout automatique)
+## Utilisation rapide (tout automatique)
 
 ```bash
 make all
