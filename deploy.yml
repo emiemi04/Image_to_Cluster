@@ -1,0 +1,108 @@
+---
+- name: Déploiement de l'image Nginx customisée sur le cluster K3d
+  hosts: local
+  gather_facts: false
+
+  vars:
+    image_name: "nginx-custom:latest"
+    cluster_name: "lab"
+    namespace: "default"
+    app_name: "nginx-custom"
+    container_port: 80
+    node_port: 30080
+    replicas: 2
+
+  tasks:
+
+    - name: Vérifier que l'image Docker a bien été construite par Packer
+      command: docker image inspect {{ image_name }}
+      register: image_check
+      failed_when: false
+      changed_when: false
+
+    - name: Stopper si l'image n'existe pas encore
+      fail:
+        msg: >
+          L'image {{ image_name }} est introuvable en local.
+          Lancez d'abord "make packer-build" (ou "packer build ." dans le dossier packer/).
+      when: image_check.rc != 0
+
+    - name: Vérifier que le cluster K3d "{{ cluster_name }}" existe
+      command: k3d cluster list {{ cluster_name }}
+      register: cluster_check
+      failed_when: false
+      changed_when: false
+
+    - name: Stopper si le cluster K3d n'existe pas
+      fail:
+        msg: 'Le cluster K3d "{{ cluster_name }}" est introuvable. Lancez "make cluster" avant de continuer.'
+      when: cluster_check.rc != 0
+
+    - name: Importer l'image customisée dans le cluster K3d
+      command: k3d image import {{ image_name }} -c {{ cluster_name }}
+      register: import_result
+      changed_when: true
+
+    - name: Générer le manifest Deployment
+      copy:
+        dest: "/tmp/{{ app_name }}-deployment.yaml"
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: {{ app_name }}
+            namespace: {{ namespace }}
+            labels:
+              app: {{ app_name }}
+          spec:
+            replicas: {{ replicas }}
+            selector:
+              matchLabels:
+                app: {{ app_name }}
+            template:
+              metadata:
+                labels:
+                  app: {{ app_name }}
+              spec:
+                containers:
+                  - name: {{ app_name }}
+                    image: {{ image_name }}
+                    imagePullPolicy: IfNotPresent
+                    ports:
+                      - containerPort: {{ container_port }}
+
+    - name: Générer le manifest Service (NodePort)
+      copy:
+        dest: "/tmp/{{ app_name }}-service.yaml"
+        content: |
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: {{ app_name }}
+            namespace: {{ namespace }}
+          spec:
+            type: NodePort
+            selector:
+              app: {{ app_name }}
+            ports:
+              - port: 80
+                targetPort: {{ container_port }}
+                nodePort: {{ node_port }}
+
+    - name: Appliquer le Deployment sur le cluster
+      command: kubectl apply -f /tmp/{{ app_name }}-deployment.yaml
+
+    - name: Appliquer le Service sur le cluster
+      command: kubectl apply -f /tmp/{{ app_name }}-service.yaml
+
+    - name: Attendre que le déploiement soit prêt (rollout)
+      command: kubectl rollout status deployment/{{ app_name }} -n {{ namespace }} --timeout=120s
+
+    - name: Afficher les services du namespace
+      command: kubectl get svc -n {{ namespace }}
+      register: svc_output
+      changed_when: false
+
+    - name: Résumé
+      debug:
+        msg: "{{ svc_output.stdout_lines }}"
